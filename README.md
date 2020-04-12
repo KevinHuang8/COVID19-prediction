@@ -1,1 +1,1 @@
-# CS156-COVID19
+# Global Minimum Gang
