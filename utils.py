@@ -1,18 +1,19 @@
+import os
 import plotly.express as px
 import pandas as pd
 import json
 
-def plot_county_data(df, yname, yrange, xname='fips'):
-    with open('geojson/geojson-counties-fips.json') as f:
-        counties = json.load(f)
+MAIN_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(MAIN_DIR, 'upstream\\data')
 
-    fig = px.choropleth_mapbox(df, geojson=counties, locations=xname, color=yname,
-                               color_continuous_scale="Viridis",
-                               range_color=yrange,
-                               mapbox_style="carto-positron",
-                               zoom=3, center = {"lat": 37.0902, "lon": -95.7129},
-                               opacity=0.5,
-                               labels={'unemp':'unemployment rate'}
-                              )
-    fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-    return fig
+def load_covid_data(source='usafacts'):
+    yesterday = date.today() - timedelta(days=1)
+    if source == 'usafacts':
+        df = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+            dtype={'countyFIPS':str})
+        yesterday = f'{yesterday.month}/{yesterday.day}/{yesterday.year}'
+        yesterday_cases = df.loc[:, ['State', 'countyFIPS', 'County Name', yesterday_col]]
+    elif source == 'nytimes':
+        raise NotImplementedError
+    else:
+        raise ValueError('Source not recognized. Options are: usafacts, nytimes')
