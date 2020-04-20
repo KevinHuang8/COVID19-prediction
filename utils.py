@@ -12,7 +12,88 @@ OTHER_DATA_DIR = os.path.join(MAIN_DIR, 'other data')
 
 ### FIPS changes: 51515 > 51019, 46113 > 46102, 2158 > 2270
 
-def load_covid_data(source='usafacts'):
+def fix_county_FIPS(df):
+    d = df.copy()
+    # Add leading zero to FIPS codes with only 4 digits
+    d.loc[d['FIPS'].str.len() == 4, 'FIPS'] = \
+        '0' + d.loc[d['FIPS'].str.len() == 4, 'FIPS']
+    # Remove state FIPS
+    d = d[d['FIPS'].str.len() != 1]
+    
+    # Remove FIPS codes not in population data
+    d = d[~d['FIPS'].isin(['02158', '06000'])]
+    d.sort_values('FIPS', inplace=True)
+    d.reset_index(drop=True, inplace=True)
+    return d
+
+def calibrate_timeseries(t, cutoff=50):
+    '''
+    t is an array of shape (n_counties, n_timesteps)
+    
+    Shifts each time series so that the start is when the value
+    reaches the cutoff. For example, only take data after the
+    day where deaths reaches 50, and sets that day as t = 0. The
+    end becomes padded with nan.
+
+    **Assumes that all values are non-decreasing with time, or
+    else the order gets messed up for that row**
+        - There are a few instances where cumulative deaths
+          decreases in the data, which is impossible in real life
+
+    Only take counties with values greater than cutoff
+    '''
+    a = np.copy(t).astype(float)
+    mask = a > 50
+    flipped_mask = mask[:,::-1]
+    a[flipped_mask] = a[mask]
+    a[~flipped_mask] = np.nan
+    return a
+
+def smooth_timeseries(t, size=5):
+    '''Smooth the function by taking a moving average of "size" time steps'''
+    average_filter = np.full((size, ), 1 / size)
+    return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'), 
+        axis=1, arr=t)
+
+def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration=50):
+    df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+        dtype={'countyFIPS':str})
+    df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
+    df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'), 
+        dtype={'countyFIPS':str})
+    df_deaths = df_deaths.rename(columns={'countyFIPS' : 'FIPS'})
+
+    df_deaths = fix_county_FIPS(df_deaths)
+    df_cases = fix_county_FIPS(df_cases)
+
+    # Get rid of every column except for time series
+    df_deaths = df_deaths.iloc[:, 4:]
+    df_cases = df_cases.iloc[:, 4:]
+
+    cases = calibrate_timeseries(df_cases.values, cases_calibration)
+    deaths = calibrate_timeseries(df_deaths.values, deaths_calibration)
+
+    # Get percentage change between days
+    with np.errstate(divide='ignore', invalid='ignore'):
+        deaths_pchange = np.diff(deaths) / deaths[:, :-1]
+        cases_pchange = np.diff(cases) / cases[:, :-1]
+    # all invalid percentage changes should be set to nan
+    deaths_pchange = np.nan_to_num(deaths_pchange, nan=np.nan, posinf=np.nan, neginf=np.nan)
+    cases_pchange = np.nan_to_num(cases_pchange, nan=np.nan, posinf=np.nan, neginf=np.nan)
+
+    d_smoothed = smooth_timeseries(deaths_pchange, smoothing)
+    c_smoothed = smooth_timeseries(cases_pchange, smoothing)
+
+    return {'deaths_pc' : deaths_pchange, 
+            'deaths_pc_smoothed' : d_smoothed,
+            'deaths_calibrated' : deaths,
+            'deaths_raw' : df_deaths.values.astype(float),
+            'cases_pc' : cases_pchange,
+            'cases_pc_smoothed' : c_smoothed,
+            'cases_calibrated' : cases,
+            'cases_raw' : df_cases.values.astype(float)}
+
+def load_covid_static(source='usafacts'):
     yesterday = date.today() - timedelta(days=2)
     if source == 'usafacts':
         df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
@@ -29,19 +110,14 @@ def load_covid_data(source='usafacts'):
         yesterday_cases = yesterday_cases.rename(columns={yesterday: 'cases'})
         yesterday_deaths = yesterday_deaths.rename(columns={yesterday: 'deaths'})
 
+        # Combine cases and deaths into one table for easy access
         cols_to_use = yesterday_deaths.columns.difference(yesterday_cases.columns)
         cases_deaths = pd.merge(yesterday_cases, yesterday_deaths[cols_to_use], how='outer', 
             left_index=True, right_index=True)
 
-        # Add leading zero to FIPS codes with only 4 digits
-        cases_deaths.loc[cases_deaths['FIPS'].str.len() == 4, 'FIPS'] = \
-            '0' + cases_deaths.loc[cases_deaths['FIPS'].str.len() == 4, 'FIPS']
-        # Remove state FIPS
-        cases_deaths = cases_deaths[cases_deaths['FIPS'].str.len() != 1]
-        # Remove FIPS codes not in population data
-        cases_deaths = cases_deaths[~cases_deaths['FIPS'].isin(['02158', '06000'])]
-        cases_deaths = cases_deaths.reset_index(drop=True)
-        # Add log data
+        cases_deaths = fix_county_FIPS(cases_deaths)
+
+        # Add log data for better graphing
         logcases = np.log10(cases_deaths['cases']).replace([np.inf, -np.inf], 0)
         logdeaths = np.log10(cases_deaths['deaths']).replace([np.inf, -np.inf], 0)
         cases_deaths['log_cases'] = pd.Series(logcases, index=cases_deaths.index)
@@ -60,9 +136,12 @@ def load_demographics_data():
     return demographics
 
 def generate_demographics_data():
+    '''Don't really need to call this again after the data is already generated, since demographics data
+    doesn't change. Except if you want to change the demographics data.'''
     d = cd.download('acs5', 2018, cd.censusgeo([('county', '*')]),
                                        ['DP05_0018E', 'DP05_0037PE', 'DP05_0038PE', 'DP05_0071PE',],
                                        tabletype='profile')
+    #Find variable names for data you want here:
     #https://api.census.gov/data/2018/acs/acs1/profile/groups/DP05.html
     d = d.rename(columns={'DP05_0018E': 'median_age', 'DP05_0037PE':'pop_white', 'DP05_0038PE':'pop_black','DP05_0071PE':'pop_hispanic'})
     d = d[['median_age', 'pop_white', 'pop_black', 'pop_hispanic']]
@@ -72,6 +151,7 @@ def generate_demographics_data():
     df.drop(['state', 'county'], axis=1, inplace=True)
     df = df[['FIPS', 'NAME', 'median_age', 'pop_white', 'pop_black', 'pop_hispanic']]
     df.replace('02158', '02270', inplace=True)
+    # Remove puerto rico
     df = df.drop(df[df['FIPS'].str[:2] == '72'].index)
     df.sort_values('FIPS', inplace=True)
     df.reset_index(drop=True, inplace=True)
@@ -103,6 +183,7 @@ def generate_demographics_data():
 
 def generate_demographics_data2(include_age_breakdown=False):
     '''Use the other one. Here for reference'''
+
     # Get population data
     population = pd.read_csv(os.path.join(DATA_DIR, 'us\\demographics\\county_populations.csv'), dtype={'FIPS':str})
     population.loc[population['FIPS'].str.len() == 4, 'FIPS'] = '0' + population.loc[population['FIPS'].str.len() == 4, 'FIPS']
