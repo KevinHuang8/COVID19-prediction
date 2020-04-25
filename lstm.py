@@ -212,7 +212,7 @@ def generate_result():
 		n_neurons = 1
 
 		# Skip this county, not worth it to train
-		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE):
+		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE || len(series) < 20):
 			for i in range (n_seq):
 				cases = series.iloc[-1]["deaths"] - series.iloc[-2]["deaths"]
 				date = LAST_DATE + timedelta(days=i+1)
