@@ -180,20 +180,24 @@ def generate_result():
 
 	LAST_DATE = parser("2020-04-23")
 	THRESHOLD_IGNORE = 20
-	CHECKPOINT = 500
+	CHECKPOINT = 250
 
 	data = read_csv('us-counties.csv', header=0, index_col=0, squeeze = True, parse_dates=[0], usecols=[0,1,2,3,5], date_parser=parser)
 	data.loc[data['county'] == "New York City", 'fips'] = 36061
 	data.loc[data['state'] == "Guam", 'fips'] = 66010
 	unique_fips = data.fips.unique()
-	print(36061 in unique_fips)
+	unique_fips = [x for x in unique_fips if str(x) != 'nan']
 	print("{} fips total".format(len(unique_fips)))
 	prediction = [["id","10","20","30","40","50","60","70","80","90"]]
 	for i in tqdm(range(len(unique_fips))):
-		if i % CHECKPOINT == CHECKPOINT-1:
+
+		if i % CHECKPOINT == CHECKPOINT - 1:
+			print('CHECKPOINT %d' %i)
 			with open("predictions_%d.csv" % i, "w+") as f:
 				csv_writer = csv.write(f, delimeter = ",")
 				csv_writer.writerows(prediction)
+			print('Finished saving checkpoint')
+
 		fips = unique_fips[i]
 		print("Fips #{}: {}".format(i+1, fips))
 		series = data[data["fips"] == fips].drop(["fips", "county", "state"], axis=1)
@@ -234,7 +238,6 @@ def generate_result():
 		actual = inverse_transform(series, actual, scaler, n_test+2)
 		evaluate forecasts
 		evaluate_forecasts(actual, forecasts, n_lag, n_seq)
-
 		plot_forecasts(series, forecasts, n_test+2)
 		'''
 
@@ -243,6 +246,7 @@ def generate_result():
 		for i, day in enumerate(forecast_daily):
 			cases = day
 			date = LAST_DATE + timedelta(days=i+1)
+
 			prediction.append([date.strftime('%Y-%m-%d') + "-" + str(int(fips))]
 			+ [cases for x in range(9)])
 
