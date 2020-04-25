@@ -6,9 +6,9 @@ from pandas import datetime
 from datetime import timedelta
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense
+from tensorflow.python.keras.layers import LSTM
 from math import sqrt
 from matplotlib import pyplot
 from numpy import array
@@ -216,7 +216,7 @@ def generate_result():
 		n_neurons = 1
 
 		# Skip this county, not worth it to train
-		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE || len(series) < 20):
+		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE or len(series) < 20):
 			for i in range (n_seq):
 				cases = series.iloc[-1]["deaths"] - series.iloc[-2]["deaths"]
 				date = LAST_DATE + timedelta(days=i+1)
