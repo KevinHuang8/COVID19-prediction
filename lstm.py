@@ -184,7 +184,7 @@ def generate_result():
 	data.loc[data['county'] == "New York City", 'fips'] = 36061
 	data.loc[data['state'] == "Guam", 'fips'] = 66010
 	unique_fips = data.fips.unique()
-	print(36061 in unique_fips)
+	unique_fips = [x for x in unique_fips if str(x) != 'nan']
 	print("{} fips total".format(len(unique_fips)))
 	prediction = [["id","10","20","30","40","50","60","70","80","90"]]
 	for i, fips in enumerate(unique_fips):
@@ -236,6 +236,7 @@ def generate_result():
 		for i, day in enumerate(forecast_daily):
 			cases = day
 			date = LAST_DATE + timedelta(days=i+1)
+
 			prediction.append([date.strftime('%Y-%m-%d') + "-" + str(int(fips))]
 			+ [cases for x in range(9)])
 
