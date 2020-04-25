@@ -3,6 +3,7 @@ from pandas import Series
 from pandas import concat
 from pandas import read_csv
 from pandas import datetime
+from datetime import timedelta
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential
@@ -11,6 +12,7 @@ from keras.layers import LSTM
 from math import sqrt
 from matplotlib import pyplot
 from numpy import array
+import csv
 
 # convert time series into supervised learning problem
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
@@ -44,6 +46,23 @@ def difference(dataset, interval=1):
 		diff.append(value)
 	return Series(diff)
 
+def predict_last_n_days(series, n):
+	# extract raw values
+	raw_values = series.values
+	# transform data to be stationary
+	diff_series = difference(raw_values, 1)
+	diff_values = diff_series.values
+	diff_values = diff_values.reshape(len(diff_values), 1)
+
+	# rescale values to -1, 1
+	scaler = MinMaxScaler(feature_range=(-1, 1))
+	scaled_values = scaler.fit_transform(diff_values)
+	scaled_values = scaled_values.reshape(len(scaled_values), 1)
+
+	scaled_values = [x[0] for x in scaled_values]
+
+	return array(scaled_values[-n:])
+
 # transform series into train and test sets for supervised learning
 def prepare_data(series, n_test, n_lag, n_seq):
 	# extract raw values
@@ -60,7 +79,7 @@ def prepare_data(series, n_test, n_lag, n_seq):
 	supervised = series_to_supervised(scaled_values, n_lag, n_seq)
 	supervised_values = supervised.values
 	# split into train and test sets
-	train, test = supervised_values[0:-n_test], supervised_values[-n_test:]
+	train, test = supervised_values[0:len(supervised_values) - n_test], supervised_values[len(supervised_values)-n_test:]
 	return scaler, train, test
 
 # fit an LSTM network to training data
@@ -158,40 +177,70 @@ def generate_result():
 	Data in format (Date, Cases)
 	'''
 
-	data = read_csv('us-counties.csv', header=0, index_col=0, squeeze = True, parse_dates=[0], usecols=[0,3,5], date_parser=parser)
+	LAST_DATE = parser("2020-04-23")
+	THRESHOLD_IGNORE = 20
+
+	data = read_csv('us-counties.csv', header=0, index_col=0, squeeze = True, parse_dates=[0], usecols=[0,1,2,3,5], date_parser=parser)
+	data.loc[data['county'] == "New York City", 'fips'] = 36061
+	data.loc[data['state'] == "Guam", 'fips'] = 66010
 	unique_fips = data.fips.unique()
-	for fips in unique_fips:
-		print("Current Fips: " + str(fips))
-		series = data[data["fips"] == fips].drop(["fips"], axis=1)
+	print(36061 in unique_fips)
+	print("{} fips total".format(len(unique_fips)))
+	prediction = [["id","10","20","30","40","50","60","70","80","90"]]
+	for i, fips in enumerate(unique_fips):
+		print("Fips #{}: {}".format(i+1, fips))
+		series = data[data["fips"] == fips].drop(["fips", "county", "state"], axis=1)
+
 		# configure
 
 		# Given 17 previous days, predit the next 14
 		n_lag = 17
 		n_seq = 14
 
-		# Two predictions
-		n_test = 2
+		# All training data
+		n_test = 0
 
 		n_epochs = 1000
 		n_batch = 1
 		n_neurons = 1
+
+		# Skip this county, not worth it to train
+		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE):
+			for i in range (n_seq):
+				cases = series.iloc[-1]["deaths"] - series.iloc[-2]["deaths"]
+				date = LAST_DATE + timedelta(days=i+1)
+				prediction.append([date.strftime('%Y-%m-%d') + "-" + str(int(fips))]
+				+ [cases for x in range(9)])
+			continue
+
+		to_predict = predict_last_n_days(series, n_lag)
 		# prepare data
 		scaler, train, test = prepare_data(series, n_test, n_lag, n_seq)
 		# fit model
 		model = fit_lstm(train, n_lag, n_seq, n_batch, n_epochs, n_neurons)
-		# make forecasts
-		forecasts = make_forecasts(model, n_batch, train, test, n_lag, n_seq)
-		# inverse transform forecasts and test
+
+		forecasts = [forecast_lstm(model, to_predict, n_batch)]
 		forecasts = inverse_transform(series, forecasts, scaler, n_test+2)
+
+		'''
 		actual = [row[n_lag:] for row in test]
 		actual = inverse_transform(series, actual, scaler, n_test+2)
-		# evaluate forecasts
+		evaluate forecasts
 		evaluate_forecasts(actual, forecasts, n_lag, n_seq)
 
-		print(forecasts)
-		print(actual)
-
-		# plot forecasts
 		plot_forecasts(series, forecasts, n_test+2)
+		'''
+
+		forecast_daily = difference(to_predict[-1] + [x[0] for x in forecasts[0]])
+
+		for i, day in enumerate(forecast_daily):
+			cases = day
+			date = LAST_DATE + timedelta(days=i+1)
+			prediction.append([date.strftime('%Y-%m-%d') + "-" + str(int(fips))]
+			+ [cases for x in range(9)])
+
+	with open("predictions.csv", "w+") as f:
+		csv_writer = csv.write(f, delimeter = ",")
+		csv_writer.writerows(prediction)
 
 generate_result()
