@@ -180,6 +180,7 @@ def generate_result():
 
 	LAST_DATE = parser("2020-04-23")
 	THRESHOLD_IGNORE = 20
+	CHECKPOINT = 500
 
 	data = read_csv('us-counties.csv', header=0, index_col=0, squeeze = True, parse_dates=[0], usecols=[0,1,2,3,5], date_parser=parser)
 	data.loc[data['county'] == "New York City", 'fips'] = 36061
