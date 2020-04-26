@@ -13,6 +13,7 @@ from math import sqrt
 from matplotlib import pyplot
 from numpy import array
 import csv
+from tqdm import tqdm
 
 # convert time series into supervised learning problem
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
@@ -188,8 +189,7 @@ def generate_result():
 	unique_fips = [x for x in unique_fips if str(x) != 'nan']
 	print("{} fips total".format(len(unique_fips)))
 	prediction = [["id","10","20","30","40","50","60","70","80","90"]]
-	for i in range(2000, 0, -1):
-
+	for i in tqdm(range(len(unique_fips))):
 		if i % CHECKPOINT == CHECKPOINT - 1:
 			print('CHECKPOINT %d' %i)
 			with open("predictions_%d.csv" % i, "w+") as f:
