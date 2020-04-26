@@ -6,9 +6,9 @@ from pandas import datetime
 from datetime import timedelta
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense
+from tensorflow.python.keras.layers import LSTM
 from math import sqrt
 from matplotlib import pyplot
 from numpy import array
@@ -179,6 +179,7 @@ def generate_result():
 
 	LAST_DATE = parser("2020-04-23")
 	THRESHOLD_IGNORE = 20
+	CHECKPOINT = 250
 
 	data = read_csv('us-counties.csv', header=0, index_col=0, squeeze = True, parse_dates=[0], usecols=[0,1,2,3,5], date_parser=parser)
 	data.loc[data['county'] == "New York City", 'fips'] = 36061
@@ -187,7 +188,16 @@ def generate_result():
 	unique_fips = [x for x in unique_fips if str(x) != 'nan']
 	print("{} fips total".format(len(unique_fips)))
 	prediction = [["id","10","20","30","40","50","60","70","80","90"]]
-	for i, fips in enumerate(unique_fips):
+	for i in range(2000, 0, -1):
+
+		if i % CHECKPOINT == CHECKPOINT - 1:
+			print('CHECKPOINT %d' %i)
+			with open("predictions_%d.csv" % i, "w+") as f:
+				csv_writer = csv.writer(f, delimiter = ",")
+				csv_writer.writerows(prediction)
+			print('Finished saving checkpoint')
+
+		fips = unique_fips[i]
 		print("Fips #{}: {}".format(i+1, fips))
 		series = data[data["fips"] == fips].drop(["fips", "county", "state"], axis=1)
 
@@ -205,7 +215,7 @@ def generate_result():
 		n_neurons = 1
 
 		# Skip this county, not worth it to train
-		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE):
+		if (series.iloc[-1]["deaths"] < THRESHOLD_IGNORE or len(series) < 20):
 			for i in range (n_seq):
 				cases = series.iloc[-1]["deaths"] - series.iloc[-2]["deaths"]
 				date = LAST_DATE + timedelta(days=i+1)
@@ -227,7 +237,6 @@ def generate_result():
 		actual = inverse_transform(series, actual, scaler, n_test+2)
 		evaluate forecasts
 		evaluate_forecasts(actual, forecasts, n_lag, n_seq)
-
 		plot_forecasts(series, forecasts, n_test+2)
 		'''
 
@@ -241,7 +250,7 @@ def generate_result():
 			+ [cases for x in range(9)])
 
 	with open("predictions.csv", "w+") as f:
-		csv_writer = csv.write(f, delimeter = ",")
+		csv_writer = csv.writer(f, delimiter = ",")
 		csv_writer.writerows(prediction)
 
 generate_result()

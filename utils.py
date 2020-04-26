@@ -43,7 +43,7 @@ def calibrate_timeseries(t, cutoff=50):
     Only take counties with values greater than cutoff
     '''
     a = np.copy(t).astype(float)
-    mask = a > 50
+    mask = a > cutoff
     flipped_mask = mask[:,::-1]
     a[flipped_mask] = a[mask]
     a[~flipped_mask] = np.nan
@@ -55,7 +55,7 @@ def smooth_timeseries(t, size=5):
     return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'), 
         axis=1, arr=t)
 
-def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration=50):
+def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration=100):
     df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
         dtype={'countyFIPS':str})
     df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
