@@ -1,5 +1,5 @@
 import os
-import datetime 
+import datetime as dt
 from datetime import date, timedelta
 import pandas as pd
 import numpy as np
@@ -26,28 +26,45 @@ def fix_county_FIPS(df):
     d.reset_index(drop=True, inplace=True)
     return d
 
-def calibrate_timeseries(t, cutoff=50):
+def calibrate_timeseries(t, *s, cutoff=50):
     '''
-    t is an array of shape (n_counties, n_timesteps)
+    all positional arguments are arrays of shape (n_counties, n_timesteps)
+    that represent time series
     
-    Shifts each time series so that the start is when the value
-    reaches the cutoff. For example, only take data after the
-    day where deaths reaches 50, and sets that day as t = 0. The
-    end becomes padded with nan.
+    Shifts each time series in s & t so that they begin at the same index
+    as when the corresponding time series in t reaches the cutoff. For example, 
+    only take data after the day where deaths reaches 50, and sets that day as 
+    time = 0. Deaths would be passed in as t, and all the other series
+    (for example cases) that you want to calibrate with deaths is passed in
+    as s. The end of each time series becomes padded with nan.
 
     **Assumes that all values are non-decreasing with time, or
     else the order gets messed up for that row**
         - There are a few instances where cumulative deaths
           decreases in the data, which is impossible in real life
-
-    Only take counties with values greater than cutoff
     '''
-    a = np.copy(t).astype(float)
-    mask = a > cutoff
+    row, col = np.indices(t.shape)
+    # Index of first day when value > cutoff for each row
+    calibrated_start = np.argmax(t > cutoff, axis=1)
+    calibrated_start = np.expand_dims(calibrated_start, axis=1)
+    # Rows that contain values all < cutoff
+    to_remove = np.all(t <= cutoff, axis=1)
+
+    # For each row, get all values after the calibrated
+    # start date, and move them to the front
+    mask = col >= calibrated_start
     flipped_mask = mask[:,::-1]
-    a[flipped_mask] = a[mask]
-    a[~flipped_mask] = np.nan
-    return a
+
+    calibrated = []
+    for x in ((t,) + s):
+        a = np.copy(x).astype(float)
+        a[flipped_mask] = a[mask]
+        # Everything not meeting cutoff is nan
+        a[~flipped_mask] = np.nan
+        a[to_remove] = np.nan
+        calibrated.append(a)
+    
+    return calibrated
 
 def smooth_timeseries(t, size=5):
     '''Smooth the function by taking a moving average of "size" time steps'''
@@ -55,7 +72,7 @@ def smooth_timeseries(t, size=5):
     return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'), 
         axis=1, arr=t)
 
-def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration=100):
+def load_covid_raw():
     df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
         dtype={'countyFIPS':str})
     df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
@@ -66,17 +83,148 @@ def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration
     df_deaths = fix_county_FIPS(df_deaths)
     df_cases = fix_county_FIPS(df_cases)
 
-    # Get rid of every column except for time series
-    df_deaths = df_deaths.iloc[:, 4:]
-    df_cases = df_cases.iloc[:, 4:]
+    df_cases.drop(['County Name', 'State', 'stateFIPS'], axis=1, inplace=True)
+    df_deaths.drop(['County Name', 'State', 'stateFIPS'], axis=1, inplace=True)
 
-    cases = calibrate_timeseries(df_cases.values, cases_calibration)
-    deaths = calibrate_timeseries(df_deaths.values, deaths_calibration)
+    return df_cases, df_deaths    
 
-    # Get percentage change between days
+def reload_nyt_data():
+    print('reloading...')
+    rawdata = load_covid_raw()
+    rawcases = rawdata[0]
+    rawdeaths = rawdata[1]
+
+    dat = pd.read_csv(os.path.join(DATA_DIR, 
+        'us\\covid\\nyt_us_counties.csv'), parse_dates=[0], 
+        dtype={'fips':str})
+    dat.loc[dat['county'] == 'New York City', 'fips'] = '36061'
+    dat.loc[dat['state'] == 'Guam', 'fips'] = '66010'
+    dat['date'] = dat['date'].dt.strftime('%#m/%#d/%y')
+    dat = dat.astype({'date' : str})
+
+    data_cases = pd.DataFrame()
+    data_deaths = pd.DataFrame()
+
+    curr = dt.datetime.strptime('1/21/2020', '%m/%d/%Y')
+    last = dt.datetime.strptime(dat.iloc[-1].date, '%m/%d/%y')
+    data_cases['FIPS'] = np.nan
+    while curr != last:
+        curr = curr + timedelta(days=1)
+        data_cases[curr.strftime('%#m/%#d/%y')] = np.nan
+
+    curr = dt.datetime.strptime('1/21/2020', '%m/%d/%Y')
+    last = dt.datetime.strptime(dat.iloc[-1].date, '%m/%d/%y')
+    data_deaths['FIPS'] = np.nan
+    while curr != last:
+        curr = curr + timedelta(days=1)
+        data_deaths[curr.strftime('%#m/%#d/%y')] = np.nan
+
+    NYT_fips = dat['fips'].unique()
+    for index, row in rawcases.iterrows():
+        fips = row['FIPS']
+        if fips not in NYT_fips:
+            data_cases = data_cases.append(row, ignore_index=True)
+            continue
+        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state', 
+            'deaths'], axis=1).T
+        r.columns = r.iloc[0]
+        r.drop('date', axis=0, inplace=True)
+        r['FIPS'] = fips
+        data_cases = data_cases.append(r, ignore_index=True, sort=False)
+        print('cases: ' + str(index))
+
+    for index, row in rawdeaths.iterrows():
+        fips = row['FIPS']
+        if fips not in NYT_fips:
+            data_deaths = data_deaths.append(row, ignore_index=True)
+            continue
+        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state', 
+            'cases'], axis=1).T
+        r.columns = r.iloc[0]
+        r.drop('date', axis=0, inplace=True)
+        r['FIPS'] = fips
+        data_deaths = data_deaths.append(r, ignore_index=True, sort=False)
+        print('deaths: ' + str(index))
+
+    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state', 
+        'deaths'], axis=1).T
+    r.columns = r.iloc[0]
+    r.drop('date', axis=0, inplace=True)
+    r['FIPS'] = '66010'
+    data_cases = data_cases.append(r, ignore_index=True, sort=False)
+
+    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state', 
+        'cases'], axis=1).T
+    r.columns = r.iloc[0]
+    r.drop('date', axis=0, inplace=True)
+    r['FIPS'] = '66010'
+    data_deaths = data_deaths.append(r, ignore_index=True, sort=False)
+
+    data_deaths.drop('1/21/20', axis=1, inplace=True)
+    data_deaths.fillna(0, inplace=True)
+    data_deaths.to_csv(os.path.join(OTHER_DATA_DIR, 
+        'nyt_deaths.csv'))
+    data_cases.drop('1/21/20', axis=1, inplace=True)
+    data_cases.fillna(0, inplace=True)
+    data_cases.to_csv(os.path.join(OTHER_DATA_DIR, 
+        'nyt_cases.csv'))
+
+def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, 
+    deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False):
+    if source == 'nytimes':
+        if not reload_data and not force_no_reload:
+            df_cases = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
+                'nyt_cases.csv'), dtype={'FIPS':str})
+            nyt_raw = pd.read_csv(os.path.join(DATA_DIR, 
+                'us\\covid\\nyt_us_counties.csv'), dtype={'countyFIPS':str})
+            last_date_available = dt.datetime.strptime(nyt_raw.iloc[-1].date, 
+                '%Y-%m-%d')
+            last_date_checked =  dt.datetime.strptime(df_cases.columns[-1], 
+                '%m/%d/%y')
+            if last_date_checked != last_date_available:
+                reload_data = True
+
+        if reload_data:
+            reload_nyt_data()
+
+        df_cases = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
+                'nyt_cases.csv'), dtype={'FIPS':str})
+        df_deaths = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
+                'nyt_deaths.csv'), dtype={'FIPS':str})
+
+        df_deaths = df_deaths.iloc[:, 2:]
+        df_cases = df_cases.iloc[:, 2:]
+        
+    elif source =='usafacts':
+        df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+            dtype={'countyFIPS':str})
+        df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
+        df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'), 
+            dtype={'countyFIPS':str})
+        df_deaths = df_deaths.rename(columns={'countyFIPS' : 'FIPS'})
+
+        df_deaths = fix_county_FIPS(df_deaths)
+        df_cases = fix_county_FIPS(df_cases)
+
+        # Get rid of every column except for time series
+        df_deaths = df_deaths.iloc[:, 4:]
+        df_cases = df_cases.iloc[:, 4:]
+    else:
+        raise ValueError('Invalid Source. Must be "nytimes" or "usafacts".')
+
+    # Calibrate cases based on a cases cutoff
+    cases, deaths = calibrate_timeseries(df_cases.values, 
+        df_deaths.values, cutoff=cases_cutoff)
+    
+    # This below does deaths calibration independently 
+    # deaths = calibrate_timeseries(df_deaths.values, cutoff=deaths_cutoff)
+
+    # Get percentage change between 'interval_change' days
     with np.errstate(divide='ignore', invalid='ignore'):
-        deaths_pchange = np.diff(deaths) / deaths[:, :-1]
-        cases_pchange = np.diff(cases) / cases[:, :-1]
+        d = deaths[:, ::interval_change]
+        c = cases[:, ::interval_change]
+        deaths_pchange = np.diff(d) / d[:, :-1]
+        cases_pchange = np.diff(c) / c[:, :-1]
     # all invalid percentage changes should be set to nan
     deaths_pchange = np.nan_to_num(deaths_pchange, nan=np.nan, posinf=np.nan, neginf=np.nan)
     cases_pchange = np.nan_to_num(cases_pchange, nan=np.nan, posinf=np.nan, neginf=np.nan)
@@ -93,8 +241,8 @@ def load_covid_timeseries(smoothing=5, cases_calibration=200, deaths_calibration
             'cases_calibrated' : cases,
             'cases_raw' : df_cases.values.astype(float)}
 
-def load_covid_static(source='usafacts'):
-    yesterday = date.today() - timedelta(days=2)
+def load_covid_static(source='usafacts', days_ago=2):
+    yesterday = date.today() - timedelta(days=days_ago)
     if source == 'usafacts':
         df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
             dtype={'countyFIPS':str})
@@ -130,9 +278,11 @@ def load_covid_static(source='usafacts'):
     else:
         raise ValueError('Source not recognized. Options are: usafacts, nytimes')
 
-def load_demographics_data():
+def load_demographics_data(include_guam=True):
     demographics = pd.read_csv(os.path.join(OTHER_DATA_DIR, 'county_demographics.csv'), dtype={'FIPS':str})
     demographics.drop(['NAME'], axis=1, inplace=True)
+    if not include_guam:
+        demographics = demographics.iloc[:-1]
     return demographics
 
 def generate_demographics_data():
