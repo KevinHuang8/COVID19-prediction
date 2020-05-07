@@ -69,6 +69,8 @@ def calibrate_timeseries(t, *s, cutoff=50):
 def smooth_timeseries(t, size=5):
     '''Smooth the function by taking a moving average of "size" time steps'''
     average_filter = np.full((size, ), 1 / size)
+
+    t = np.pad(t, [(0, 0), (size // 2, size // 2)], mode='edge')
     return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'), 
         axis=1, arr=t)
 
@@ -169,7 +171,7 @@ def reload_nyt_data():
     data_cases.to_csv(os.path.join(OTHER_DATA_DIR, 
         'nyt_cases.csv'))
 
-def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, 
+def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
     deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False):
     if source == 'nytimes':
         if not reload_data and not force_no_reload:
@@ -212,6 +214,10 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200,
     else:
         raise ValueError('Invalid Source. Must be "nytimes" or "usafacts".')
 
+    if log:
+        df_cases = np.log10(df_cases).replace([np.inf, -np.inf], 0)
+        df_deaths = np.log10(df_deaths).replace([np.inf, -np.inf], 0)
+
     # Calibrate cases based on a cases cutoff
     cases, deaths = calibrate_timeseries(df_cases.values, 
         df_deaths.values, cutoff=cases_cutoff)
@@ -232,14 +238,19 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200,
     d_smoothed = smooth_timeseries(deaths_pchange, smoothing)
     c_smoothed = smooth_timeseries(cases_pchange, smoothing)
 
+    cases_calib_smooth = smooth_timeseries(cases, smoothing)
+    deaths_calib_smooth = smooth_timeseries(deaths, smoothing)
+
     return {'deaths_pc' : deaths_pchange, 
             'deaths_pc_smoothed' : d_smoothed,
             'deaths_calibrated' : deaths,
             'deaths_raw' : df_deaths.values.astype(float),
+            'deaths_calibrated_smoothed' : deaths_calib_smooth,
             'cases_pc' : cases_pchange,
             'cases_pc_smoothed' : c_smoothed,
             'cases_calibrated' : cases,
-            'cases_raw' : df_cases.values.astype(float)}
+            'cases_raw' : df_cases.values.astype(float),
+            'cases_calibrated_smoothed' : cases_calib_smooth}
 
 def load_covid_static(source='usafacts', days_ago=2):
     yesterday = date.today() - timedelta(days=days_ago)
