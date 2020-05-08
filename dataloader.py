@@ -3,12 +3,12 @@ import datetime as dt
 from datetime import date, timedelta
 import pandas as pd
 import numpy as np
-import censusdata as cd
 import json
+from pathlib import Path
 
-MAIN_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(MAIN_DIR, 'upstream\\data')
-OTHER_DATA_DIR = os.path.join(MAIN_DIR, 'other data')
+MAIN_DIR = Path(__file__).parent.absolute()
+DATA_DIR = MAIN_DIR / 'upstream' / 'data'
+OTHER_DATA_DIR = MAIN_DIR / 'other data'
 
 ### FIPS changes: 51515 > 51019, 46113 > 46102, 2158 > 2270
 
@@ -19,7 +19,7 @@ def fix_county_FIPS(df):
         '0' + d.loc[d['FIPS'].str.len() == 4, 'FIPS']
     # Remove state FIPS
     d = d[d['FIPS'].str.len() != 1]
-    
+
     # Remove FIPS codes not in population data
     d = d[~d['FIPS'].isin(['02158', '06000'])]
     d.sort_values('FIPS', inplace=True)
@@ -30,10 +30,10 @@ def calibrate_timeseries(t, *s, cutoff=50):
     '''
     all positional arguments are arrays of shape (n_counties, n_timesteps)
     that represent time series
-    
+
     Shifts each time series in s & t so that they begin at the same index
-    as when the corresponding time series in t reaches the cutoff. For example, 
-    only take data after the day where deaths reaches 50, and sets that day as 
+    as when the corresponding time series in t reaches the cutoff. For example,
+    only take data after the day where deaths reaches 50, and sets that day as
     time = 0. Deaths would be passed in as t, and all the other series
     (for example cases) that you want to calibrate with deaths is passed in
     as s. The end of each time series becomes padded with nan.
@@ -63,7 +63,7 @@ def calibrate_timeseries(t, *s, cutoff=50):
         a[~flipped_mask] = np.nan
         a[to_remove] = np.nan
         calibrated.append(a)
-    
+
     return calibrated
 
 def smooth_timeseries(t, size=5):
@@ -71,14 +71,14 @@ def smooth_timeseries(t, size=5):
     average_filter = np.full((size, ), 1 / size)
 
     t = np.pad(t, [(0, 0), (size // 2, size // 2)], mode='edge')
-    return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'), 
+    return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'),
         axis=1, arr=t)
 
 def load_covid_raw():
-    df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+    df_cases = pd.read_csv(DATA_DIR / 'us' / 'covid' / 'confirmed_cases.csv',
         dtype={'countyFIPS':str})
     df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
-    df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'), 
+    df_deaths = pd.read_csv(DATA_DIR / 'us' / 'covid' / 'deaths.csv',
         dtype={'countyFIPS':str})
     df_deaths = df_deaths.rename(columns={'countyFIPS' : 'FIPS'})
 
@@ -88,7 +88,7 @@ def load_covid_raw():
     df_cases.drop(['County Name', 'State', 'stateFIPS'], axis=1, inplace=True)
     df_deaths.drop(['County Name', 'State', 'stateFIPS'], axis=1, inplace=True)
 
-    return df_cases, df_deaths    
+    return df_cases, df_deaths
 
 def reload_nyt_data():
     print('Reloading NYT data... May take a minute...')
@@ -96,14 +96,14 @@ def reload_nyt_data():
     rawcases = rawdata[0]
     rawdeaths = rawdata[1]
 
-    dat = pd.read_csv(os.path.join(DATA_DIR, 
-        'us\\covid\\nyt_us_counties.csv'), parse_dates=[0], 
+    dat = pd.read_csv(DATA_DIR / "us" / "covid" / "nyt_us_counties.csv",
+        parse_dates=[0],
         dtype={'fips':str})
     dat.loc[dat['county'] == 'New York City', 'fips'] = '36061'
     dat.loc[dat['state'] == 'Guam', 'fips'] = '66010'
-    dat['date'] = dat['date'].dt.strftime('%#m/%#d/%y')
+    # Windows: dat['date'] = dat['date'].dt.strftime('%#m/%#d/%y')
+    dat['date'] = dat['date'].dt.strftime('%-m/%-d/%y')
     dat = dat.astype({'date' : str})
-
     data_cases = pd.DataFrame()
     data_deaths = pd.DataFrame()
 
@@ -112,14 +112,16 @@ def reload_nyt_data():
     data_cases['FIPS'] = np.nan
     while curr != last:
         curr = curr + timedelta(days=1)
-        data_cases[curr.strftime('%#m/%#d/%y')] = np.nan
+        # Windows: data_cases[curr.strftime('%#m/%#d/%y')] = np.nan
+        data_cases[curr.strftime('%-m/%-d/%y')] = np.nan
 
     curr = dt.datetime.strptime('1/21/2020', '%m/%d/%Y')
     last = dt.datetime.strptime(dat.iloc[-1].date, '%m/%d/%y')
     data_deaths['FIPS'] = np.nan
     while curr != last:
         curr = curr + timedelta(days=1)
-        data_deaths[curr.strftime('%#m/%#d/%y')] = np.nan
+        #Windows:data_deaths[curr.strftime('%#m/%#d/%y')] = np.nan
+        data_deaths[curr.strftime('%-m/%-d/%y')] = np.nan
 
     NYT_fips = dat['fips'].unique()
     for index, row in rawcases.iterrows():
@@ -127,7 +129,7 @@ def reload_nyt_data():
         if fips not in NYT_fips:
             data_cases = data_cases.append(row, ignore_index=True)
             continue
-        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state', 
+        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state',
             'deaths'], axis=1).T
         r.columns = r.iloc[0]
         r.drop('date', axis=0, inplace=True)
@@ -140,7 +142,7 @@ def reload_nyt_data():
         if fips not in NYT_fips:
             data_deaths = data_deaths.append(row, ignore_index=True)
             continue
-        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state', 
+        r = dat[dat['fips'] == fips].drop(['fips', 'county', 'state',
             'cases'], axis=1).T
         r.columns = r.iloc[0]
         r.drop('date', axis=0, inplace=True)
@@ -148,14 +150,14 @@ def reload_nyt_data():
         data_deaths = data_deaths.append(r, ignore_index=True, sort=False)
         #print('deaths: ' + str(index))
 
-    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state', 
+    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state',
         'deaths'], axis=1).T
     r.columns = r.iloc[0]
     r.drop('date', axis=0, inplace=True)
     r['FIPS'] = '66010'
     data_cases = data_cases.append(r, ignore_index=True, sort=False)
 
-    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state', 
+    r = dat[dat['fips'] == '66010'].drop(['fips', 'county', 'state',
         'cases'], axis=1).T
     r.columns = r.iloc[0]
     r.drop('date', axis=0, inplace=True)
@@ -164,24 +166,21 @@ def reload_nyt_data():
 
     data_deaths.drop('1/21/20', axis=1, inplace=True)
     data_deaths.fillna(0, inplace=True)
-    data_deaths.to_csv(os.path.join(OTHER_DATA_DIR, 
-        'nyt_deaths.csv'))
+    data_deaths.to_csv(OTHER_DATA_DIR / 'nyt_deaths.csv')
     data_cases.drop('1/21/20', axis=1, inplace=True)
     data_cases.fillna(0, inplace=True)
-    data_cases.to_csv(os.path.join(OTHER_DATA_DIR, 
-        'nyt_cases.csv'))
+    data_cases.to_csv(OTHER_DATA_DIR / 'nyt_cases.csv')
 
 def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
     deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False):
     if source == 'nytimes':
         if not reload_data and not force_no_reload:
-            df_cases = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
-                'nyt_cases.csv'), dtype={'FIPS':str})
-            nyt_raw = pd.read_csv(os.path.join(DATA_DIR, 
-                'us\\covid\\nyt_us_counties.csv'), dtype={'countyFIPS':str})
-            last_date_available = dt.datetime.strptime(nyt_raw.iloc[-1].date, 
+            df_cases = pd.read_csv(OTHER_DATA_DIR / 'nyt_cases.csv', dtype={'FIPS':str})
+            nyt_raw = pd.read_csv(DATA_DIR / "us" / "covid" / "nyt_us_counties.csv"
+                , dtype={'countyFIPS':str})
+            last_date_available = dt.datetime.strptime(nyt_raw.iloc[-1].date,
                 '%Y-%m-%d')
-            last_date_checked =  dt.datetime.strptime(df_cases.columns[-1], 
+            last_date_checked =  dt.datetime.strptime(df_cases.columns[-1],
                 '%m/%d/%y')
             if last_date_checked != last_date_available:
                 reload_data = True
@@ -189,19 +188,17 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=F
         if reload_data:
             reload_nyt_data()
 
-        df_cases = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
-                'nyt_cases.csv'), dtype={'FIPS':str})
-        df_deaths = pd.read_csv(os.path.join(OTHER_DATA_DIR, 
-                'nyt_deaths.csv'), dtype={'FIPS':str})
+        df_cases = pd.read_csv(OTHER_DATA_DIR / 'nyt_cases.csv', dtype={'FIPS':str})
+        df_deaths = pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})
 
         df_deaths = df_deaths.iloc[:, 2:]
         df_cases = df_cases.iloc[:, 2:]
-        
+
     elif source =='usafacts':
-        df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+        df_cases = pd.read_csv(DATA_DIR / 'us' / 'covid' / 'confirmed_cases.csv',
             dtype={'countyFIPS':str})
         df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
-        df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'), 
+        df_deaths = pd.read_csv(DATA_DIR / 'us' / 'covid' / 'deaths.csv',
             dtype={'countyFIPS':str})
         df_deaths = df_deaths.rename(columns={'countyFIPS' : 'FIPS'})
 
@@ -219,10 +216,10 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=F
         df_deaths = np.log10(df_deaths).replace([np.inf, -np.inf], 0)
 
     # Calibrate cases based on a cases cutoff
-    cases, deaths = calibrate_timeseries(df_cases.values, 
+    cases, deaths = calibrate_timeseries(df_cases.values,
         df_deaths.values, cutoff=cases_cutoff)
-    
-    # This below does deaths calibration independently 
+
+    # This below does deaths calibration independently
     # deaths = calibrate_timeseries(df_deaths.values, cutoff=deaths_cutoff)
 
     # Get percentage change between 'interval_change' days
@@ -241,7 +238,7 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=F
     cases_calib_smooth = smooth_timeseries(cases, smoothing)
     deaths_calib_smooth = smooth_timeseries(deaths, smoothing)
 
-    return {'deaths_pc' : deaths_pchange, 
+    return {'deaths_pc' : deaths_pchange,
             'deaths_pc_smoothed' : d_smoothed,
             'deaths_calibrated' : deaths,
             'deaths_raw' : df_deaths.values.astype(float),
@@ -255,10 +252,10 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=F
 def load_covid_static(source='usafacts', days_ago=2):
     yesterday = date.today() - timedelta(days=days_ago)
     if source == 'usafacts':
-        df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'), 
+        df_cases = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\confirmed_cases.csv'),
             dtype={'countyFIPS':str})
         df_cases = df_cases.rename(columns={'countyFIPS' : 'FIPS'})
-        df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'), 
+        df_deaths = pd.read_csv(os.path.join(DATA_DIR, 'us\\covid\\deaths.csv'),
             dtype={'countyFIPS':str})
         df_deaths = df_deaths.rename(columns={'countyFIPS' : 'FIPS'})
 
@@ -271,7 +268,7 @@ def load_covid_static(source='usafacts', days_ago=2):
 
         # Combine cases and deaths into one table for easy access
         cols_to_use = yesterday_deaths.columns.difference(yesterday_cases.columns)
-        cases_deaths = pd.merge(yesterday_cases, yesterday_deaths[cols_to_use], how='outer', 
+        cases_deaths = pd.merge(yesterday_cases, yesterday_deaths[cols_to_use], how='outer',
             left_index=True, right_index=True)
 
         cases_deaths = fix_county_FIPS(cases_deaths)
@@ -371,7 +368,7 @@ def generate_demographics_data2(include_age_breakdown=False):
     df = pd.read_csv(os.path.join(DATA_DIR, 'us\\demographics\\acs_2018.csv'), dtype={'FIPS':str}, engine='python')
     df.loc[df['FIPS'].str.len() == 4, 'FIPS'] = '0' + df.loc[df['FIPS'].str.len() == 4, 'FIPS']
     df.sort_values('FIPS', inplace=True)
-    df.rename(columns={'Estimate!!SEX AND AGE!!Total population!!Sex ratio (males per 100 females)':'mf_ratio', 
+    df.rename(columns={'Estimate!!SEX AND AGE!!Total population!!Sex ratio (males per 100 females)':'mf_ratio',
                        'Estimate!!SEX AND AGE!!Total population!!Median age (years)' : 'median_age',
                        'Percent Estimate!!SEX AND AGE!!Total population!!Under 5 years' : 'pop_under5',
                       'Percent Estimate!!SEX AND AGE!!Total population!!5 to 9 years' : 'pop_5to9',
@@ -390,7 +387,7 @@ def generate_demographics_data2(include_age_breakdown=False):
                       'Percent Estimate!!RACE!!Total population!!One race!!Black or African American' : 'pop_black',
                       'Percent Estimate!!HISPANIC OR LATINO AND RACE!!Total population!!Hispanic or Latino (of any race)' : 'pop_hispanic'}, inplace=True)
     if include_age_breakdown:
-        df = df.loc[:, ['FIPS', 'mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54', 
+        df = df.loc[:, ['FIPS', 'mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54',
                         'pop_55to59', 'pop_60to64', 'pop_65to74', 'pop_75to84', 'pop_over85', 'pop_white', 'pop_black', 'pop_hispanic']]
     else:
         df = df.loc[:, ['FIPS', 'mf_ratio', 'median_age', 'pop_white', 'pop_black', 'pop_hispanic']]
@@ -409,9 +406,9 @@ def generate_demographics_data2(include_age_breakdown=False):
     statedemo.loc[:, ['White', 'Black', 'Hispanic']] *= 100
 
     if include_age_breakdown:
-        demographics[['mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54', 
+        demographics[['mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54',
                         'pop_55to59', 'pop_60to64', 'pop_65to74', 'pop_75to84', 'pop_over85']] = \
-        demographics[['mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54', 
+        demographics[['mf_ratio', 'median_age', 'pop_under5', 'pop_5to9', 'pop_15to19', 'pop_20to24', 'pop_25to34', 'pop_35to44', 'pop_45to54',
                         'pop_55to59', 'pop_60to64', 'pop_65to74', 'pop_75to84', 'pop_over85']].fillna(value=demographics.mean().round(1))
     else:
         demographics[['mf_ratio', 'median_age']] = demographics[['mf_ratio', 'median_age']].fillna(value=demographics.mean().round(1))
