@@ -38,7 +38,6 @@ def get_time_list(data, future=0):
         t = np.concatenate((t, extrapolation + t[-1] + 1))
     return t
 
-
 def run_model(func, params, t):
     '''
     func: method handle being run

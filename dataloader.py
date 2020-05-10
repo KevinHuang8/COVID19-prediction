@@ -3,6 +3,7 @@ import datetime as dt
 from datetime import date, timedelta
 import pandas as pd
 import numpy as np
+import censusdata as cd
 import json
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def load_covid_raw():
 
     return df_cases, df_deaths
 
-def reload_nyt_data():
+def reload_nyt_data(windows):
     print('Reloading NYT data... May take a minute...')
     rawdata = load_covid_raw()
     rawcases = rawdata[0]
@@ -101,8 +102,10 @@ def reload_nyt_data():
         dtype={'fips':str})
     dat.loc[dat['county'] == 'New York City', 'fips'] = '36061'
     dat.loc[dat['state'] == 'Guam', 'fips'] = '66010'
-    # Windows: dat['date'] = dat['date'].dt.strftime('%#m/%#d/%y')
-    dat['date'] = dat['date'].dt.strftime('%-m/%-d/%y')
+    if windows:
+        dat['date'] = dat['date'].dt.strftime('%#m/%#d/%y')
+    else:
+        dat['date'] = dat['date'].dt.strftime('%-m/%-d/%y')
     dat = dat.astype({'date' : str})
     data_cases = pd.DataFrame()
     data_deaths = pd.DataFrame()
@@ -112,16 +115,20 @@ def reload_nyt_data():
     data_cases['FIPS'] = np.nan
     while curr != last:
         curr = curr + timedelta(days=1)
-        # Windows: data_cases[curr.strftime('%#m/%#d/%y')] = np.nan
-        data_cases[curr.strftime('%-m/%-d/%y')] = np.nan
+        if windows:
+            data_cases[curr.strftime('%#m/%#d/%y')] = np.nan
+        else:
+            data_cases[curr.strftime('%-m/%-d/%y')] = np.nan
 
     curr = dt.datetime.strptime('1/21/2020', '%m/%d/%Y')
     last = dt.datetime.strptime(dat.iloc[-1].date, '%m/%d/%y')
     data_deaths['FIPS'] = np.nan
     while curr != last:
         curr = curr + timedelta(days=1)
-        #Windows:data_deaths[curr.strftime('%#m/%#d/%y')] = np.nan
-        data_deaths[curr.strftime('%-m/%-d/%y')] = np.nan
+        if windows:
+            data_deaths[curr.strftime('%#m/%#d/%y')] = np.nan
+        else:
+            data_deaths[curr.strftime('%-m/%-d/%y')] = np.nan
 
     NYT_fips = dat['fips'].unique()
     for index, row in rawcases.iterrows():
@@ -172,7 +179,8 @@ def reload_nyt_data():
     data_cases.to_csv(OTHER_DATA_DIR / 'nyt_cases.csv')
 
 def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
-    deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False):
+    deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False,
+    windows=True):
     if source == 'nytimes':
         if not reload_data and not force_no_reload:
             df_cases = pd.read_csv(OTHER_DATA_DIR / 'nyt_cases.csv', dtype={'FIPS':str})
@@ -186,7 +194,7 @@ def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=F
                 reload_data = True
 
         if reload_data:
-            reload_nyt_data()
+            reload_nyt_data(windows)
 
         df_cases = pd.read_csv(OTHER_DATA_DIR / 'nyt_cases.csv', dtype={'FIPS':str})
         df_deaths = pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})

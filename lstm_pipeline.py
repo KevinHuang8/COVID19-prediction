@@ -1,8 +1,8 @@
 import numpy as np
 #import tensorflow as tf
 
-import data as dt
-import models
+import lstm_data as dt
+import lstm_models as models
 import dataloader as loader
 
 class Pipeline:
