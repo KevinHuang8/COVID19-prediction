@@ -1,4 +1,7 @@
+import csv
+import datetime as dt
 import numpy as np
+import pandas as pd
 import curvefit_models as models
 import dataloader as loader
 
@@ -177,6 +180,7 @@ class Pipeline:
 
     def predict(self, quantiles=False, samples=100):
         self.predictions = {}
+        print('')
         for county in range(self.data.n_counties):
             print(f'Predicting {county}/{self.data.n_counties - 1}', end='\r')
             try:
@@ -213,7 +217,7 @@ class Pipeline:
                     end - self.data.val_steps + self.horizon)
 
             if quantiles:
-                y_pred = model.predict_quantiles(x, quantiles, samples)
+                y_pred = model.predict_quantiles(x, quantiles, samples, county)
             else:
                 y_pred = model.predict(x)
             self.predictions[county] = y_pred
@@ -264,3 +268,67 @@ class Pipeline:
                 y_pred = model.predict(x)
             combined[county] = y_pred
         return combined
+
+    def write_to_file(self, filename, sample_dir, quantiles):
+        df = pd.read_csv(sample_dir)
+        info = loader.load_info_raw()
+
+        i = df.set_index('id').sort_index().index
+        sub_fips = np.unique([s[11:] for s in i])
+        data_fips = [s.lstrip('0') for s in info['FIPS']]
+
+        dont_include = []
+        for fips in data_fips:
+            if fips not in sub_fips:
+                dont_include.append(fips)
+
+        must_include = []
+        for fips in sub_fips:
+            if fips not in data_fips:
+                must_include.append(fips)
+
+        start_date = '04/01/2020'
+        end_date = '06/30/2020'
+        predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%y')
+        predict_start = predict_start + dt.timedelta(days=1)
+
+        predictions = self.predictions
+
+        to_write = [['id'] + [str(q) for q in quantiles]]
+        for county in predictions:
+            print(f'writing {county}/{len(predictions) - 1}', end='\r')
+            
+            fips = info.iloc[county]['FIPS'].lstrip('0')
+            if fips in dont_include:
+                continue
+            
+            county_pred = predictions[county]
+            
+            date = dt.datetime.strptime(start_date, '%m/%d/%Y')
+            end = dt.datetime.strptime(end_date, '%m/%d/%Y')
+            predict_end = predict_start + dt.timedelta(days=self.horizon - 1)
+            while date <= end:
+                id_ = date.strftime('%Y-%m-%d-') + fips
+                
+                if predict_start <= date <= predict_end:
+                    index = (date - predict_start).days
+                    p = list(county_pred[index, :])
+                else:
+                    p = [0 for i in range(len(quantiles))]
+                    
+                to_write.append([id_] + p)
+                date = date + dt.timedelta(days=1)
+
+        for fips in must_include:
+            date = dt.datetime.strptime(start_date, '%m/%d/%Y')
+            end = dt.datetime.strptime(end_date, '%m/%d/%Y')
+            while date <= end:
+                id_ = date.strftime('%Y-%m-%d-') + fips
+                p = [0 for i in range(len(quantiles))]
+                    
+                to_write.append([id_] + p)
+                date = date + dt.timedelta(days=1)
+
+        with open(filename, "w+", newline='') as f:
+                csv_writer = csv.writer(f, delimiter = ",")
+                csv_writer.writerows(to_write)

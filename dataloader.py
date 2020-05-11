@@ -178,6 +178,10 @@ def reload_nyt_data(windows):
     data_cases.fillna(0, inplace=True)
     data_cases.to_csv(OTHER_DATA_DIR / 'nyt_cases.csv')
 
+def load_info_raw():
+    df = pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})
+    return df
+
 def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
     deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False,
     windows=True):

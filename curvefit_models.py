@@ -35,8 +35,13 @@ class CurvefitModel:
         errors = np.sqrt(np.diag(self.pcov))
         ## High errors for pre-peak/mid-peak counties
         ## Make errors max 1/2 of mean value
+        count = 0
         while np.any(errors > (1/2) * self.popt):
             errors = errors / 2
+            count += 1
+            if count > 50:
+                errors = np.zeros(self.popt.shape[0])
+                break
 
         all_samples = []
         for i in range(samples):
