@@ -32,7 +32,8 @@ class Data:
         '''Smooth the function by taking a moving average of "size" time steps'''
         average_filter = np.full((size, ), 1 / size)
 
-        t = np.pad(t, [(size // 2, size // 2)], mode='edge')
+        t = np.pad(t, [(size // 2 + (not size % 2), size // 2)], mode='median', 
+            stat_length=size)
         return np.apply_along_axis(lambda r: np.convolve(r, average_filter, 
             mode='valid'), axis=0, arr=t)
 
@@ -103,8 +104,10 @@ class Pipeline:
             try:
                 model = self.models[county]
             except KeyError:
-                self.predictions[county] = np.full((self.horizon, ), 
-                    self.data.raw_data[county, -1])
+                s = self.data.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]))
+                self.predictions[county][county] = np.full(shape, 
+                    s[-1])
                 continue
             
             ### First train on differenced data
@@ -190,8 +193,10 @@ class Pipeline:
                     shape = (self.horizon, len(quantiles))
                 else:
                     shape = (self.horizon, )
+                s = self.data.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]))
                 self.predictions[county] = np.full(shape, 
-                    self.data.raw_data[county, -1])
+                    s[-1])
                 continue
 
             try:
@@ -201,8 +206,10 @@ class Pipeline:
                     shape = (self.horizon, len(quantiles))
                 else:
                     shape = (self.horizon, )
+                s = self.data.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]))
                 self.predictions[county] = np.full(shape, 
-                    self.data.raw_data[county, -1])
+                    s[-1])
                 continue
 
             if use_cumulative:
@@ -237,8 +244,10 @@ class Pipeline:
                     shape = (n, len(quantiles))
                 else:
                     shape = (n, )
+                s = self.data.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]))
                 combined[county] = np.full(shape, 
-                    self.data.raw_data[county, -1])
+                    s[-1])
                 continue
 
             try:
@@ -248,8 +257,10 @@ class Pipeline:
                     shape = (n, len(quantiles))
                 else:
                     shape = (n, )
+                s = self.data.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]))
                 combined[county] = np.full(shape, 
-                    self.data.raw_data[county, -1])
+                    s[-1])
                 continue
 
             if use_cumulative:
@@ -289,8 +300,8 @@ class Pipeline:
 
         start_date = '04/01/2020'
         end_date = '06/30/2020'
-        predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%y')
-        predict_start = predict_start + dt.timedelta(days=1)
+        predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%Y') \
+            - dt.timedelta(days=self.data.val_steps) + dt.timedelta(days=1)
 
         predictions = self.predictions
 
@@ -310,7 +321,8 @@ class Pipeline:
             while date <= end:
                 id_ = date.strftime('%Y-%m-%d-') + fips
                 
-                if predict_start <= date <= predict_end:
+                if predict_start <= date <= predict_end and (
+                    fips not in ['36005', '36047', '36081', '36085']):
                     index = (date - predict_start).days
                     p = list(county_pred[index, :])
                 else:

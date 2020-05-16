@@ -70,8 +70,8 @@ def calibrate_timeseries(t, *s, cutoff=50):
 def smooth_timeseries(t, size=5):
     '''Smooth the function by taking a moving average of "size" time steps'''
     average_filter = np.full((size, ), 1 / size)
-
-    t = np.pad(t, [(0, 0), (size // 2, size // 2)], mode='edge')
+    t = np.pad(t, [(0, 0), (size // 2 + (not size % 2), size // 2)], mode='median', 
+            stat_length=size)
     return np.apply_along_axis(lambda r: np.convolve(r, average_filter, mode='valid'),
         axis=1, arr=t)
 

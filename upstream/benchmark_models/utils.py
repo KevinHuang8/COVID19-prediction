@@ -6,7 +6,7 @@ import pandas as pd
 def get_processed_df(file_name='nyt_us_counties.csv'):
     repo = git.Repo("./", search_parent_directories=True)
     homedir = repo.working_dir
-    datadir = f"{homedir}/data/us/covid/"
+    datadir = f"{homedir}/upstream/data/us/covid/"
     df = pd.read_csv(datadir + file_name)
     df['date_processed'] = pd.to_datetime(df['date'].values)
     # Convert YYYY-MM-DD date format into integer number of days since the first day in the data set

@@ -5,7 +5,7 @@ np.set_printoptions(precision=5)
 import utils
 
 
-def score_all_predictions(pred_file, date, model_date, mse=False, key='cases', bin_cutoffs=[20, 1000]):
+def score_all_predictions(pred_file, date, model_date, mse=False, key='cases', bin_cutoffs=[20, 200, 1000]):
     true_data = utils.get_processed_df('nyt_us_counties_daily.csv')
     cum_data = utils.get_processed_df('nyt_us_counties.csv')
     proc_score_date = utils.process_date(date, true_data)
@@ -22,11 +22,16 @@ def score_all_predictions(pred_file, date, model_date, mse=False, key='cases', b
 def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000], mse=False):
     tot_loss = 0
     bin_losses, bin_counts = np.zeros(len(bin_cutoffs) + 1), np.zeros(len(bin_cutoffs) + 1)
+    losses = []
+    z = 0
     for fips, preds, true_number, cum_number in zip(all_fips, all_preds, true_data, cum_data):
         if mse:
             loss = (preds[4] - true_number) ** 2
         else:
             loss = pinball_loss(preds, true_number)
+        losses.append((fips, loss))
+        if loss == 0:
+            z += 1
         tot_loss += loss
         done = False
         for i, bc in enumerate(bin_cutoffs):
@@ -39,7 +44,7 @@ def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000],
             bin_losses[-1] += loss
             bin_counts[-1] += 1
 
-    return tot_loss / len(all_preds), bin_losses / bin_counts
+    return tot_loss / len(all_preds), bin_losses / bin_counts, losses
 
 
 def pinball_loss(preds, true_val, p_vals=np.arange(0.1, 1.0, 0.1)):
@@ -54,7 +59,10 @@ def pinball_loss(preds, true_val, p_vals=np.arange(0.1, 1.0, 0.1)):
 
 
 if __name__ == '__main__':
-    pred_file = os.path.join(os.getcwd(), 'erf_model_predictions_0413.csv')
-    scores = score_all_predictions(pred_file, '2020-04-14', '2020-04-13', key='deaths')
-    scores_mse = score_all_predictions(pred_file, '2020-04-14', '2020-04-13', key='deaths', mse=True)
+    from operator import itemgetter
+    pred_file = '../../predictions/predictions-2020-05-10-v3.csv'
+    scores = score_all_predictions(pred_file, '2020-05-10', '2020-05-10', key='deaths')
+    scores_mse = score_all_predictions(pred_file, '2020-05-10', '2020-05-10', key='deaths', mse=True)
     print(scores[0], scores_mse[0])
+    print(sorted(scores[2], key=itemgetter(1)))
+    print(scores[3])
