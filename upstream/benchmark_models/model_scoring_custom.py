@@ -27,6 +27,8 @@ def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000],
     for fips, preds, true_number, cum_number in zip(all_fips, all_preds, true_data, cum_data):
         if mse:
             loss = (preds[4] - true_number) ** 2
+            if fips == '36061':
+                print('NYC: ', preds[4], true_number, loss)
         else:
             loss = pinball_loss(preds, true_number)
         losses.append((fips, loss))
@@ -60,9 +62,20 @@ def pinball_loss(preds, true_val, p_vals=np.arange(0.1, 1.0, 0.1)):
 
 if __name__ == '__main__':
     from operator import itemgetter
-    pred_file = '../../predictions/predictions-2020-05-10-v3.csv'
-    scores = score_all_predictions(pred_file, '2020-05-10', '2020-05-10', key='deaths')
-    scores_mse = score_all_predictions(pred_file, '2020-05-10', '2020-05-10', key='deaths', mse=True)
-    print(scores[0], scores_mse[0])
-    print(sorted(scores[2], key=itemgetter(1)))
-    print(scores[3])
+    import datetime as dt
+    pred_file = '../../predictions/predictions-2020-05-10-v4.csv'
+    start_date = '2020-05-10'
+    date = dt.datetime.strptime(start_date, '%Y-%m-%d')
+    horizon = 5
+    end_date = date + dt.timedelta(days=horizon)
+    total_score = 0
+    total_score_mse = 0
+    while date < end_date:
+        date_str = date.strftime('%Y-%m-%d')
+        total_score += score_all_predictions(pred_file, date_str, date_str, key='deaths')[0]
+        total_score_mse += score_all_predictions(pred_file, date_str, date_str, key='deaths', mse=True)[0]
+        date = date + dt.timedelta(days=1)
+    total_score /= horizon
+    total_score_mse /= horizon
+    print(total_score, total_score_mse)
+    #print(sorted(scores[2], key=itemgetter(1)))

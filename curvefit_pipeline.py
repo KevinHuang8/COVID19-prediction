@@ -1,4 +1,5 @@
 import csv
+import pickle
 import datetime as dt
 import numpy as np
 import pandas as pd
@@ -72,6 +73,14 @@ class Pipeline:
             params = model_params['params']
         except KeyError:
             params = {}
+        try:
+            self.use_gp = model_params['use_gp']
+        except KeyError:
+            self.use_gp = False
+        try:
+            self.gp_params = model_params['gp_params']
+        except KeyError:
+            self.gp_params = {}
 
         self.horizon = horizon
         self.predict_time = self.data.val_steps
@@ -168,15 +177,17 @@ class Pipeline:
                 X_train, y_train, X_test, y_test = \
                     self.data.get_training_data(county, cumulative = True)
                 model.set_cumulative(True)
-                try:
-                    model.fit(X_train, y_train)
-                except ValueError as e:
-                    print(county)
-                    raise e
+                unsmoothed = self.data.cumulative_series[county][X_train]
+                unsmoothed = np.diff(unsmoothed)
             else:
                 X_train, y_train, X_test, y_test = \
                     self.data.get_training_data(county, cumulative = False)
                 model.set_cumulative(False)
+                unsmoothed = self.data.daily_change[county][X_train]
+
+            if self.use_gp:
+                model.fit(X_train, y_train, unsmoothed, **self.gp_params)
+            else:
                 model.fit(X_train, y_train)                
 
         self.predict()
@@ -278,6 +289,7 @@ class Pipeline:
             else:
                 y_pred = model.predict(x)
             combined[county] = y_pred
+        self.combined = combined
         return combined
 
     def write_to_file(self, filename, sample_dir, quantiles):
@@ -300,8 +312,12 @@ class Pipeline:
 
         start_date = '04/01/2020'
         end_date = '06/30/2020'
-        predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%Y') \
-            - dt.timedelta(days=self.data.val_steps) + dt.timedelta(days=1)
+        try:
+            predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%Y') \
+                - dt.timedelta(days=self.data.val_steps) + dt.timedelta(days=1)
+        except ValueError:
+            predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%y') \
+                - dt.timedelta(days=self.data.val_steps) + dt.timedelta(days=1)
 
         predictions = self.predictions
 
@@ -344,3 +360,12 @@ class Pipeline:
         with open(filename, "w+", newline='') as f:
                 csv_writer = csv.writer(f, delimiter = ",")
                 csv_writer.writerows(to_write)
+
+    def save(self, filename):
+        with open(filename, 'wb') as file:
+            pickle.dump(self, file)
+
+    def load(self, filename):
+        with open(filename, 'rb') as file:
+            saved = pickle.load(file)
+        return saved

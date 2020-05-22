@@ -1,4 +1,5 @@
 import numpy as np
+import pymc3 as pm
 import scipy.stats as stats
 from scipy.optimize import curve_fit
 
@@ -33,9 +34,10 @@ class CurvefitModel:
                 for i in range(len(quantiles))]).T
         
         errors = np.sqrt(np.diag(self.pcov))
-        ## High errors for pre-peak/mid-peak counties
+        # High errors for pre-peak/mid-peak counties
         count = 0
-        while np.any(errors > (1/2) * self.popt):
+        threshold = 2
+        while np.any(errors > threshold * self.popt):
             errors = errors / 2
             count += 1
             if count > 50:
@@ -63,6 +65,12 @@ class CurvefitModel:
         all_samples = np.array(all_samples)
         quantile_predictions = np.array([np.percentile(all_samples, p, axis=0) 
             for p in quantiles])
+        ## Fudge arbitrarily
+        quantile_predictions[0] *= 0.5
+        quantile_predictions[1] *= 0.625
+        quantile_predictions[2] *= 0.75
+        quantile_predictions[3] *= 0.875
+        ##
         quantile_predictions = quantile_predictions.T
         quantile_predictions[quantile_predictions < 0] = 0
         return quantile_predictions
@@ -95,3 +103,121 @@ class ExpNormModel(CurvefitModel):
         if self.is_cumulative:
             p = np.diff(p)
         return p
+
+class GPModel(ExpNormModel):
+    def fit(self, X_train, y_train, unsmoothed_y_train, **gp_params):
+        super().fit(X_train, y_train)
+
+        if self.degenerate:
+            return
+
+        y = self.predict(X_train)
+
+        residuals = unsmoothed_y_train - y
+
+        try:
+            trials = gp_params['trials']
+        except KeyError:
+            trials = 5
+
+        outputs = []
+        for i in range(trials):
+            output = self.fit_gp(X_train, residuals, **gp_params)
+            outputs.append(output)
+        outputs = np.array(outputs)
+
+        self.quantiles = np.mean(outputs, axis=0)
+
+    def fit_gp(self, X_train, residuals, **gp_params):
+        s = np.std(residuals)
+        m = np.mean(residuals)
+
+        size = 100
+        if self.is_cumulative:
+            noise = np.random.normal(loc=m, scale=s, size=size - 1)
+        else:
+            noise = np.random.normal(loc=m, scale=s, size=size)
+        X_train2 = np.linspace(X_train[0], X_train[-1] + 25, size)
+        y_train2 = self.predict(X_train2) + noise
+        if self.is_cumulative:
+            X_train2 = X_train2[:-1]
+
+        try:
+            draw = gp_params['draw']
+        except KeyError:
+            draw = 500
+        try:
+            tune = gp_params['tune']
+        except KeyError:
+            tune = 500
+        try:
+            samples = gp_params['samples']
+        except KeyError:
+            samples = 100            
+
+        with pm.Model() as gp_model:
+
+            # Lengthscale
+            ρ = pm.HalfCauchy('ρ', 5)
+            η = pm.HalfCauchy('η', 5)
+            
+            M = ExponentialGaussianMean(*self.popt)
+            K = (η**2) * pm.gp.cov.ExpQuad(1, ρ) 
+            
+            σ = pm.HalfNormal('σ', 50)
+            
+            expnorm_gp = pm.gp.Marginal(mean_func=M, cov_func=K)
+            expnorm_gp.marginal_likelihood('expnorm', X=X_train2.reshape(-1,1), 
+                                   y=y_train2, noise=σ)
+
+        with gp_model:
+            expnorm_gp_trace = pm.sample(draw, tune=tune, cores=1, 
+                random_seed=42)
+
+        self.X_pred = np.arange(0, np.max(X_train2) + 30)
+
+        with gp_model:
+            expnorm_deaths_pred = expnorm_gp.conditional('expnorm_deaths_pred2', 
+                self.X_pred.reshape(-1, 1), pred_noise=True)
+            gp_samples = pm.sample_posterior_predictive(expnorm_gp_trace, 
+                vars=[expnorm_deaths_pred], samples=samples, random_seed=42)
+
+        percentiles = [p for p in range(10, 100, 10)]
+        quantile_gp = [np.percentile(gp_samples['expnorm_deaths_pred2'], q, 
+            axis=0) for q in percentiles]
+        quantile_gp = np.array(quantile_gp)
+
+        quantile_gp[quantile_gp < 0] = 0
+
+        return quantile_gp
+
+    def predict(self, x, params=None):
+        return super().predict(x, params)
+
+    def predict_quantiles(self, x, quantiles, *args):
+        if self.degenerate:
+            return np.array([np.zeros(x.shape[0]) 
+                for i in range(len(quantiles))]).T
+
+        quantile_predictions = []
+        for q in quantiles:
+            y = self.quantiles[q][x]
+            quantile_predictions.append(y)
+
+        quantile_predictions = np.array(quantile_predictions)
+        quantile_predictions = quantile_predictions.T
+        quantile_predictions[quantile_predictions < 0] = 0
+        return quantile_predictions
+
+class ExponentialGaussianMean(pm.gp.mean.Mean):
+
+    def __init__(self, max_val, loc, scale, K):
+        pm.gp.mean.Mean.__init__(self)
+        self.max_val = max_val
+        self.loc = loc
+        self.scale = scale
+        self.K = K
+
+    def __call__(self, X):
+        return self.max_val*stats.exponnorm.pdf(X[0], self.K, self.loc, 
+            self.scale)
