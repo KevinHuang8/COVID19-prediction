@@ -178,9 +178,15 @@ def reload_nyt_data(windows):
     data_cases.fillna(0, inplace=True)
     data_cases.to_csv(OTHER_DATA_DIR / 'nyt_cases.csv')
 
-def load_info_raw():
-    df = pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})
-    return df
+def load_info_raw(fips_info=False):
+    if fips_info:
+        data = load_covid_static()
+        data = data.append({'FIPS' : '66010', 'County Name' : 'Guam', 
+            'State': 'GU'}, ignore_index=True)
+        data.drop(['cases', 'deaths', 'log_cases', 'log_deaths'], axis=1, 
+            inplace=True)
+        return data
+    return pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})
 
 def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
     deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False,
@@ -273,8 +279,8 @@ def load_covid_static(source='usafacts', days_ago=2):
 
         # Get data from most recent day
         yesterday = f'{yesterday.month}/{yesterday.day}/{yesterday.strftime("%y")}'
-        yesterday_cases = df_cases.loc[:, ['FIPS', 'County Name', yesterday]]
-        yesterday_deaths = df_deaths.loc[:, ['FIPS', 'County Name', yesterday]]
+        yesterday_cases = df_cases.loc[:, ['FIPS', 'County Name', 'State', yesterday]]
+        yesterday_deaths = df_deaths.loc[:, ['FIPS', 'County Name', 'State', yesterday]]
         yesterday_cases = yesterday_cases.rename(columns={yesterday: 'cases'})
         yesterday_deaths = yesterday_deaths.rename(columns={yesterday: 'deaths'})
 
@@ -306,6 +312,26 @@ def load_demographics_data(include_guam=True):
     demographics['pop_density'] = demographics['total_pop'] / demographics['area']
     demographics['p60_plus'] = demographics['60plus'] / demographics['total_pop']
     return demographics
+
+def load_instate_adjacency_list():
+    import pickle
+    with open(OTHER_DATA_DIR /'instate_adjacency_list.dat', 'rb') as handle:
+        return pickle.load(handle)
+
+def generate_instate_adjacency_list():
+    import pickle
+    neighbor_df = pd.read_csv(DATA_DIR / 'us' / 'geolocation' / 
+        'neighborcounties.csv', dtype={'orgfips':str, 'adjfips': str})
+    unique_fips = neighbor_df['orgfips'].unique()
+    adjacency_list = {}
+
+    for fips in unique_fips:
+        neighbors = neighbor_df[(neighbor_df['orgfips'] == fips) & 
+            (neighbor_df['instate'] == 1)]['adjfips'].to_list()
+        adjacency_list[fips] = neighbors
+
+    with open(OTHER_DATA_DIR /'instate_adjacency_list.dat', 'wb') as handle:
+        pickle.dump(adjacency_list, handle, protocol=4)
 
 def generate_demographics_data():
     '''Don't really need to call this again after the data is already generated, since demographics data
