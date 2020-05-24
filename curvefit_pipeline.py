@@ -57,7 +57,6 @@ class Data:
 
 class Pipeline:
     def __init__(self, data_format, model_params, horizon, use_cumulative=None):
-
         self.data = Data(data_format)
         self.data_format = data_format
 

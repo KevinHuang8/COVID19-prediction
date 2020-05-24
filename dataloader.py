@@ -313,6 +313,24 @@ def load_demographics_data(include_guam=True):
     demographics['p60_plus'] = demographics['60plus'] / demographics['total_pop']
     return demographics
 
+def save_to_otherdata(obj, filename, folder=None):
+    import pickle
+    if folder is not None:
+        with open(OTHER_DATA_DIR / folder / filename, 'wb+') as handle:
+            pickle.dump(obj, handle, protocol=4)
+    else:
+        with open(OTHER_DATA_DIR / filename, 'wb+') as handle:
+            pickle.dump(obj, handle, protocol=4)
+
+def load_from_otherdata(filename, folder=None):
+    import pickle
+    if folder is not None:
+        with open(OTHER_DATA_DIR / folder / filename, 'rb') as handle:
+            return pickle.load(handle)
+    else:
+        with open(OTHER_DATA_DIR / filename, 'rb') as handle:
+            return pickle.load(handle)
+
 def load_instate_adjacency_list():
     import pickle
     with open(OTHER_DATA_DIR /'instate_adjacency_list.dat', 'rb') as handle:
@@ -330,7 +348,7 @@ def generate_instate_adjacency_list():
             (neighbor_df['instate'] == 1)]['adjfips'].to_list()
         adjacency_list[fips] = neighbors
 
-    with open(OTHER_DATA_DIR /'instate_adjacency_list.dat', 'wb') as handle:
+    with open(OTHER_DATA_DIR / 'instate_adjacency_list.dat', 'wb') as handle:
         pickle.dump(adjacency_list, handle, protocol=4)
 
 def generate_demographics_data():
