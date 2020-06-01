@@ -22,7 +22,7 @@ def score_all_predictions(pred_file, date, model_date, mse=False, key='cases', b
 def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000], mse=False):
     tot_loss = 0
     bin_losses, bin_counts = np.zeros(len(bin_cutoffs) + 1), np.zeros(len(bin_cutoffs) + 1)
-    losses = []
+    losses = {}
     z = 0
     for fips, preds, true_number, cum_number in zip(all_fips, all_preds, true_data, cum_data):
         if mse:
@@ -31,7 +31,7 @@ def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000],
                 print('NYC: ', preds[4], true_number, loss)
         else:
             loss = pinball_loss(preds, true_number)
-        losses.append((fips, loss))
+        losses[fips] = loss
         if loss == 0:
             z += 1
         tot_loss += loss
@@ -63,19 +63,28 @@ def pinball_loss(preds, true_val, p_vals=np.arange(0.1, 1.0, 0.1)):
 if __name__ == '__main__':
     from operator import itemgetter
     import datetime as dt
-    pred_file = '../../predictions/predictions-2020-05-10-v4.csv'
-    start_date = '2020-05-10'
+    from collections import defaultdict
+    pred_file = '../../predictions/predictions-2020-05-13-v3.csv'
+    start_date = '2020-05-13'
     date = dt.datetime.strptime(start_date, '%Y-%m-%d')
-    horizon = 5
+    horizon = 9
     end_date = date + dt.timedelta(days=horizon)
     total_score = 0
     total_score_mse = 0
+    losses = defaultdict(int)
     while date < end_date:
         date_str = date.strftime('%Y-%m-%d')
-        total_score += score_all_predictions(pred_file, date_str, date_str, key='deaths')[0]
+        tot_loss, _, losses_info = score_all_predictions(pred_file, date_str, date_str, key='deaths')
+        total_score += tot_loss
+        for fips in losses_info:
+            losses[fips] += losses_info[fips]
         total_score_mse += score_all_predictions(pred_file, date_str, date_str, key='deaths', mse=True)[0]
         date = date + dt.timedelta(days=1)
+    for fips in losses:
+        losses[fips] /= horizon
     total_score /= horizon
     total_score_mse /= horizon
     print(total_score, total_score_mse)
-    #print(sorted(scores[2], key=itemgetter(1)))
+
+    all_losses = list(losses.items())
+    print(sorted(all_losses,key=itemgetter(1)))
