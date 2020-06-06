@@ -7,17 +7,39 @@ from . import curvefit_models as models
 from ..utils import dataloader as loader
 
 class Data:
+    '''
+    Class that stores and processes the data.
+    '''
     def __init__(self, data_format):
-        datadict = loader.load_covid_timeseries()
+        '''
+        data_format - a dict with the following entries
+            - 'name': cumulative data to load using 
+              dataloader.load_covid_timeseries()
+                - either 'cases_raw' or 'deaths_raw'
+            - 'smoothing': size of moving average to smooth timeseries
+            - 'val_steps': number of data points from end to withold for 
+              validation
+            - international: international county to use
+        '''
+        try:
+            country = data_format['international']
+        except KeyError:
+            datadict = loader.load_covid_timeseries()
 
-        name = data_format['name']
-        self.raw_data = datadict[name]
-
+            name = data_format['name']
+            self.raw_data = datadict[name]
+        else:
+            self.raw_data = loader.load_international_data(country)
+        
         self.n_counties = self.raw_data.shape[0]
 
         smoothing = data_format['smoothing']
         self.val_steps = data_format['val_steps']
 
+        # Pre-processing steps:
+        #   - only take cumulative data > 0
+        #   - smooth
+        #   - exclude counties with not enough >0 datapoints
         self.cumulative_series = {}
         self.daily_change = {}
         self.daily_smoothed = {}
@@ -26,19 +48,16 @@ class Data:
                 continue
             self.cumulative_series[county] = series[series > 0]
             self.daily_change[county] = np.diff(self.cumulative_series[county])
-            self.daily_smoothed[county] = self.smooth_timeseries(
-                self.daily_change[county], smoothing)
-
-    def smooth_timeseries(self, t, size=5):
-        '''Smooth the function by taking a moving average of "size" time steps'''
-        average_filter = np.full((size, ), 1 / size)
-
-        t = np.pad(t, [(size // 2 + (not size % 2), size // 2)], mode='median', 
-            stat_length=size)
-        return np.apply_along_axis(lambda r: np.convolve(r, average_filter, 
-            mode='valid'), axis=0, arr=t)
+            self.daily_smoothed[county] = loader.smooth_timeseries(
+                self.daily_change[county], smoothing, axis=0)
 
     def get_training_data(self, county, cumulative=False):
+        '''
+        county - a county index
+        cumulative - whether to use cumulative or daily data
+
+        Return a train/test split for the county
+        '''
         if cumulative:
             series = self.cumulative_series[county]
         else:
@@ -56,7 +75,26 @@ class Data:
         return X_train, y_train, X_test, y_test
 
 class Pipeline:
+    '''
+    Encapsulates the entire curvefit model training process.
+    '''
     def __init__(self, data_format, model_params, horizon, use_cumulative=None):
+        '''
+        data_format - see Data
+        model_params - a dict with the following elements:
+            - 'name': curvefit model to use [required]
+            - 'params': parameters to pass into model constructor
+            - 'use_gp': 
+                - 'all' means to use GP step on all counties
+                - None means to skip GP step for all counties
+                - a list of county indices to apply GP step to
+            - 'gp_params': parameters to pass into GP model, see curvefit_models
+        horizon - number of steps to predict, integer
+        use_cumulative - a dict that maps county indices to a boolean,
+        determining whether each county should use a cumulative model or not.
+        If not provided, it is automatically determined based on validation
+        set performance.
+        '''
         self.data = Data(data_format)
         self.data_format = data_format
 
@@ -75,6 +113,8 @@ class Pipeline:
             params = {}
         try:
             self.use_gp = model_params['use_gp']
+            if self.use_gp is None:
+                self.use_gp = []
         except KeyError:
             self.use_gp = []
         try:
@@ -83,15 +123,15 @@ class Pipeline:
             self.gp_params = {}
 
         self.horizon = horizon
-        self.predict_time = self.data.val_steps
 
+        # We have a separate model for each county
         self.models = {}
         for county in range(self.data.n_counties):
             try:
                 data_max = self.data.cumulative_series[county].max()
             except KeyError:
                 continue
-            if county in self.use_gp:
+            if self.use_gp == 'all' or county in self.use_gp:
                 model = gp_model(data_max=data_max, *params)
             else:
                 model = model_creator(data_max=data_max, *params)
@@ -103,12 +143,28 @@ class Pipeline:
             self.use_cumulative = None
 
     def run(self):
+        '''
+        Train each model.
+
+        If use_cumulative is not determined yet, we need to run both models
+        for each county and determine which one is better, based on validation
+        set performance. 
+        '''
         if not self.use_cumulative:
             self.blind_run()
         else:
             self.warm_run()
 
     def blind_run(self):
+        '''
+        Train each county with a cumulative and non-cumulative model, keeping
+        the better one. 
+
+        Note: We cannot use predict() or get_combined_predictions() 
+        if doing a blind run. One blind run should be done to determine
+        use_cumulative, and then another run should be made for the actual
+        predictions.
+        '''
         self.predictions = {}
         self.use_cumulative = {}
         for county in range(self.data.n_counties):
@@ -117,8 +173,8 @@ class Pipeline:
                 model = self.models[county]
             except KeyError:
                 shape = (self.horizon, )
-                s = self.data.smooth_timeseries(
-                    np.diff(self.data.raw_data[county]))
+                s = loader.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]), axis=0)
                 self.predictions[county] = np.full(shape, 
                     s[-1])
                 continue
@@ -165,6 +221,9 @@ class Pipeline:
                 self.predictions[county] = prediction2
 
     def warm_run(self):
+        '''
+        Train each model, with use_cumulative already determined. 
+        '''
         for county in range(self.data.n_counties):
             print(f'Fitting {county}/{self.data.n_counties - 1}', end='\r')
             try:
@@ -189,7 +248,7 @@ class Pipeline:
                 model.set_cumulative(False)
                 unsmoothed = self.data.daily_change[county][X_train]
 
-            if county in self.use_gp:
+            if self.use_gp == 'all' or county in self.use_gp:
                 model.fit(X_train, y_train, unsmoothed, **self.gp_params)
             else:
                 model.fit(X_train, y_train)                
@@ -197,10 +256,24 @@ class Pipeline:
         self.predict()
 
     def predict(self, quantiles=False, samples=100):
+        '''
+        quantiles -  either False, or a list of quantiles to predict for
+        samples - number of samples to take when determining quantiles
+        (does not apply to GP step)
+
+        Predict into the future, either a single value or quantiles as
+        specified.
+
+        Results stored in self.predictions, which is a dict that maps a
+        county index to a 2D np array. Axis 0 is time, and axis 1 is quantiles.
+        '''
         self.predictions = {}
         print('')
         for county in range(self.data.n_counties):
             print(f'Predicting {county}/{self.data.n_counties - 1}', end='\r')
+            # For any counties with not enough data (no model), then
+            # we simply predict a constant value, based on the last
+            # value known.
             try:
                 model = self.models[county]
             except KeyError:
@@ -208,10 +281,10 @@ class Pipeline:
                     shape = (self.horizon, len(quantiles))
                 else:
                     shape = (self.horizon, )
-                s = self.data.smooth_timeseries(
-                    np.diff(self.data.raw_data[county]))
+                s = loader.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]), axis=0)
                 self.predictions[county] = np.full(shape, 
-                    s[-1])
+                    s[-(1 + self.data.val_steps)])
                 continue
 
             try:
@@ -221,15 +294,17 @@ class Pipeline:
                     shape = (self.horizon, len(quantiles))
                 else:
                     shape = (self.horizon, )
-                s = self.data.smooth_timeseries(
-                    np.diff(self.data.raw_data[county]))
+                s = loader.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]), axis=0)
                 self.predictions[county] = np.full(shape, 
-                    s[-1])
+                    s[-(1 + self.data.val_steps)])
                 continue
 
             if use_cumulative:
                 series = self.data.cumulative_series[county]
                 end = series.shape[0]
+                # cumulative models need an extra step at the end, because
+                # the data is differenced
                 x = np.arange(end - self.data.val_steps, 
                     end - self.data.val_steps + self.horizon + 1)
             else:
@@ -239,12 +314,17 @@ class Pipeline:
                     end - self.data.val_steps + self.horizon)
 
             if quantiles:
-                y_pred = model.predict_quantiles(x, quantiles, samples, county)
+                y_pred = model.predict_quantiles(x, quantiles, samples)
             else:
                 y_pred = model.predict(x)
             self.predictions[county] = y_pred
 
     def get_combined_predictions(self, quantiles=False, samples=100):
+        '''
+        Computes predictions, but concatenates the future predicted values
+        with the past time series. This is mainly used for visualization
+        purposes.
+        '''
         ## note: rn, only works correctly w/ warm runs, otherwise models aren't
         ## correct versions
         combined = {}
@@ -259,8 +339,8 @@ class Pipeline:
                     shape = (n, len(quantiles))
                 else:
                     shape = (n, )
-                s = self.data.smooth_timeseries(
-                    np.diff(self.data.raw_data[county]))
+                s = loader.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]), axis=0)
                 combined[county] = np.full(shape, 
                     s[-1])
                 continue
@@ -272,8 +352,8 @@ class Pipeline:
                     shape = (n, len(quantiles))
                 else:
                     shape = (n, )
-                s = self.data.smooth_timeseries(
-                    np.diff(self.data.raw_data[county]))
+                s = loader.smooth_timeseries(
+                    np.diff(self.data.raw_data[county]), axis=0)
                 combined[county] = np.full(shape, 
                     s[-1])
                 continue
@@ -289,7 +369,7 @@ class Pipeline:
                 x = np.arange(0, end - self.data.val_steps + self.horizon)
 
             if quantiles:
-                y_pred = model.predict_quantiles(x, quantiles, samples, county)
+                y_pred = model.predict_quantiles(x, quantiles, samples)
             else:
                 y_pred = model.predict(x)
             combined[county] = y_pred
@@ -297,18 +377,33 @@ class Pipeline:
         return combined
 
     def write_to_file(self, filename, sample_dir, quantiles):
+        '''
+        filename - place to save predictions to, in csv format
+        sample_dir - the sample submission file. This will match all rows
+        present in the sample submission
+        quantiles - list of quantiles to report
+            - this must match quantiles used for prediction
+
+        Creates the submission file. Must have run .predict() before writing
+        to file.
+        '''
+        # Ensure that the created file has the same counties as the sample
         df = pd.read_csv(sample_dir)
         info = loader.load_info_raw()
 
         i = df.set_index('id').sort_index().index
+        # sub_fips - all FIPS in the sample
         sub_fips = np.unique([s[11:] for s in i])
+        # data_fips - all FIPS predicted
         data_fips = [s.lstrip('0') for s in info['FIPS']]
 
+        # Get all FIPS that we have predicted for, but are not in the sample
         dont_include = []
         for fips in data_fips:
             if fips not in sub_fips:
                 dont_include.append(fips)
 
+        # Get all FIPS that are in the sample, but we haven't predicted for
         must_include = []
         for fips in sub_fips:
             if fips not in data_fips:
@@ -316,6 +411,7 @@ class Pipeline:
 
         start_date = '04/01/2020'
         end_date = '06/30/2020'
+        # %Y or %y randomly work sometimes for some reason
         try:
             predict_start = dt.datetime.strptime(info.columns[-1], '%m/%d/%Y') \
                 - dt.timedelta(days=self.data.val_steps) + dt.timedelta(days=1)
@@ -325,6 +421,8 @@ class Pipeline:
 
         predictions = self.predictions
 
+        # Write predictions to file, making sure to include must_include and
+        # excluding counties in dont_include
         to_write = [['id'] + [str(q) for q in quantiles]]
         for county in predictions:
             print(f'writing {county}/{len(predictions) - 1}', end='\r')
@@ -366,6 +464,9 @@ class Pipeline:
                 csv_writer.writerows(to_write)
 
     def save(self, filename):
+        '''
+        Save the pipeline to filename.
+        '''
         with open(filename, 'wb') as file:
             pickle.dump(self, file)
 

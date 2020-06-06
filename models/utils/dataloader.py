@@ -191,6 +191,13 @@ def load_info_raw(fips_info=False):
         return data
     return pd.read_csv(OTHER_DATA_DIR / 'nyt_deaths.csv', dtype={'FIPS':str})
 
+def get_index_from_fips(fips):
+    df = load_info_raw(True)
+    try:
+        return df[df['FIPS'] == fips].index[0]
+    except IndexError:
+        raise ValueError(f'{fips} is not a valid FIPS code in the data')
+
 def load_covid_timeseries(source='nytimes', smoothing=5, cases_cutoff=200, log=False,
     deaths_cutoff=50, interval_change=1, reload_data=False, force_no_reload=False,
     windows=True):
@@ -306,6 +313,12 @@ def load_covid_static(source='usafacts', days_ago=2):
         raise NotImplementedError
     else:
         raise ValueError('Source not recognized. Options are: usafacts, nytimes')
+
+def load_international_data(country_name='Italy'):
+    df = pd.read_csv(DATA_DIR / 'international' / 'covid' / 'our_world_in_data' / 'full_data.csv')
+    deaths = df[df['location'] == 'Italy']['total_deaths'].to_list()
+    deaths = np.expand_dims(np.array(deaths), axis=0)
+    return deaths
 
 def load_demographics_data(include_guam=True):
     demographics = pd.read_csv(os.path.join(OTHER_DATA_DIR, 'county_demographics.csv'), dtype={'FIPS':str})

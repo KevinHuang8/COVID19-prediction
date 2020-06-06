@@ -29,6 +29,10 @@ def get_scores(all_fips, all_preds, true_data, cum_data, bin_cutoffs=[20, 1000],
             loss = (preds[4] - true_number) ** 2
             if fips == '36061':
                 print('NYC: ', preds[4], true_number, loss)
+            if true_number == 0:
+                losses[fips] = 0
+            else:
+                losses[fips] = abs(preds[4] - true_number) / true_number
         else:
             loss = pinball_loss(preds, true_number)
         losses[fips] = loss
@@ -64,10 +68,10 @@ if __name__ == '__main__':
     from operator import itemgetter
     import datetime as dt
     from collections import defaultdict
-    pred_file = '../../predictions/predictions-2020-05-13-v3.csv'
-    start_date = '2020-05-13'
+    pred_file = '../../predictions/predictions-2020-05-12.csv'
+    start_date = '2020-05-12'
     date = dt.datetime.strptime(start_date, '%Y-%m-%d')
-    horizon = 9
+    horizon = 30
     end_date = date + dt.timedelta(days=horizon)
     total_score = 0
     total_score_mse = 0

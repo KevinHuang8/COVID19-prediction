@@ -15,6 +15,10 @@ def degenerate(x):
     return np.zeros(x.shape)
 
 class GPCasesDeathsModel:
+    '''
+    A simple Gaussian process for predicting deaths today given cases in the
+    past.
+    '''
     def __init__(self, **params):
         try:
             self.draws = params['draws']
@@ -30,6 +34,9 @@ class GPCasesDeathsModel:
             self.samples = 100
 
     def scale_data(self, cases_past, deaths_curr):
+        '''
+        Reduce X and y by a factor of 100, to make GP faster
+        '''
         self.scale_factor = np.max(cases_past) / 100
         deaths_curr2 = np.array(deaths_curr) / self.scale_factor
         cases_past2 = np.array(cases_past) / self.scale_factor
@@ -37,7 +44,11 @@ class GPCasesDeathsModel:
 
     def fit(self, cases_past, deaths_curr, 
         quantiles=[10, 20, 30, 40, 50, 60, 70, 80, 90]):
-
+        '''
+        Use a GP to find the relationship between cases in the past and 
+        deaths today.
+        '''
+        # If not enough data, return all zeros.
         if len(cases_past) < 5:
             self.quantile_gp = []
             for q in quantiles:
@@ -46,6 +57,7 @@ class GPCasesDeathsModel:
 
         cases_past2, deaths_curr2 = self.scale_data(cases_past, deaths_curr)
 
+        # First, we do a simple linear fit, and use this as our mean prior.
         mfit = curve_fit(linear, cases_past2, deaths_curr2)
         slope = mfit[0]
 
@@ -78,6 +90,7 @@ class GPCasesDeathsModel:
             gp_samples['deaths_pred_noise'] * self.scale_factor, q, axis=0) 
                 for q in quantiles]
 
+        # We interpolate our predicted function
         X_pred2 = X_pred * self.scale_factor
         self.quantile_gp = []
         for i in range(len(quantiles)):

@@ -8,6 +8,9 @@ from .gp_model import GPCasesDeathsModel
 from ..utils.clustering import cluster_counties
 
 class Pipeline:
+    '''
+    Encapsulates the process of using our cases-deaths GP on the data.
+    '''
     def __init__(self, cluster_params, gp_params, smoothing=7, min_delay=7,
             val_steps=0, quantiles=None):
         self.min_delay = min_delay
@@ -120,14 +123,16 @@ class Pipeline:
             self.deaths_curr[c] = deaths_curr
         print()
 
-    def run(self, start=0, load=True):
+    def run(self, start=0, load=True, folder=None):
+        if folder is None:
+            folder = 'gp_cluster'
         self.models = {}
         for c in range(start, len(self.clusters)):
             print(f'fitting cluster {c + 1}/{len(self.clusters)}', end='\r')
             self.models[c] = GPCasesDeathsModel(**self.gp_params)
             if load:
                 try:
-                    self.models[c].load(f'{c}.dat', 'gp_cluster')
+                    self.models[c].load(f'{c}.dat', folder)
                     continue
                 except FileNotFoundError:
                     pass
@@ -137,7 +142,7 @@ class Pipeline:
                 #self.run(start=c)
                 raise e
                 return
-            self.models[c].save(f'{c}.dat', 'gp_cluster')
+            self.models[c].save(f'{c}.dat', folder)
         print()
 
     def interpolate_percentiles(self, point, quantile_values, reverse=True):
